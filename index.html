@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoQuant - by ealkan</title>
+    <meta name="description"
+        content="DXF dosyalarınızı yükleyin, kolon, perde ve çekirdek elemanlarını otomatik olarak analiz edin.">
+    <link rel="stylesheet" href="style.css">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <!-- Three.js for 3D Preview -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/controls/OrbitControls.js"></script>
+</head>
+
+<body class="no-scroll">
+
+    <!-- Clean up leftover service worker caches -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(registrations => {
+                registrations.forEach(reg => {
+                    reg.unregister();
+                    console.log('Service worker unregistered:', reg.scope);
+                });
+            });
+            if ('caches' in window) {
+                caches.keys().then(names => {
+                    names.forEach(name => caches.delete(name));
+                    if (names.length > 0) {
+                        console.log('Cleared caches:', names);
+                    }
+                });
+            }
+        }
+    </script>
+    <!-- Toolbar -->
+    <div class="toolbar" id="toolbar">
+        <div class="container toolbar-inner">
+            <div class="toolbar-left">
+                <i class="fas fa-drafting-compass toolbar-logo-icon"></i>
+                <span class="toolbar-brand" data-i18n="pageTitle">AutoQuant</span>
+            </div>
+            <div class="toolbar-right">
+                <!-- Language Toggle -->
+                <div class="lang-toggle">
+                    <button class="lang-btn active" data-lang="tr" onclick="setLanguage('tr')">TR</button>
+                    <button class="lang-btn" data-lang="en" onclick="setLanguage('en')">EN</button>
+                </div>
+                <!-- Theme Toggle -->
+                <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle theme">
+                    <i class="fas fa-moon" id="themeIcon"></i>
+                    <span id="themeLabel">Karanlık</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main main-viewport">
+        <div class="container">
+            <!-- Upload Section -->
+            <section class="upload-section" id="uploadSection">
+                <div class="upload-card">
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <h2 class="upload-title" data-i18n="uploadTitle">DXF Dosyanızı Yükleyin</h2>
+                    <p class="upload-description" data-i18n="uploadDesc">Dosyanızı sürükleyin veya tıklayarak seçin</p>
+                    <p class="upload-description"
+                        style="font-size: 0.9rem; color: var(--text-muted); margin-top: -0.5rem;">
+                        <i class="fas fa-info-circle"></i> <span data-i18n="uploadHint">DWG dosyalarını AutoCAD'de "Save
+                            As → DXF" ile dönüştürün</span>
+                    </p>
+
+                    <div class="upload-area" id="dropArea">
+                        <input type="file" id="fileInput" accept=".dwg,.dxf" hidden>
+                        <div class="upload-placeholder">
+                            <i class="fas fa-file-upload"></i>
+                            <p data-i18n="uploadDrag">Dosyayı buraya sürükleyin</p>
+                            <span data-i18n="uploadOr">veya</span>
+                            <button class="btn btn-primary" id="selectFileBtn">
+                                <i class="fas fa-folder-open"></i>
+                                <span data-i18n="selectFile">Dosya Seç</span>
+                            </button>
+                        </div>
+                    </div>
+
+
+                </div>
+            </section>
+
+            <!-- Loading Section -->
+            <section class="loading-section hidden" id="loadingSection">
+                <div class="loading-card">
+                    <div class="spinner"></div>
+                    <h3 data-i18n="analyzing">Dosyanız Analiz Ediliyor...</h3>
+                    <p id="loadingText" data-i18n="readingFile">DWG dosyası okunuyor</p>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill"></div>
+                    </div>
+                    <span class="progress-text" id="progressText">0%</span>
+                </div>
+            </section>
+
+            <!-- Layer Selection Section -->
+            <section class="layer-selection-section hidden" id="layerSelectionSection">
+                <div class="layer-selection-card">
+                    <h2 class="section-title">
+                        <i class="fas fa-layer-group"></i>
+                        <span data-i18n="foundLayers">Bulunan Katmanlar</span>
+                    </h2>
+                    <p class="section-description" data-i18n="layerDesc">
+                        DXF dosyanızda bulunan layer'ları aşağıda görüyorsunuz. Her layer için bir kategori seçin.
+                    </p>
+
+                    <!-- Layer List Table -->
+                    <div class="layer-table-wrapper">
+                        <table class="layer-table">
+                            <thead>
+                                <tr>
+                                    <th data-i18n="layerName">Layer Adı</th>
+                                    <th data-i18n="elementCount">Element Sayısı</th>
+                                    <th data-i18n="category">Kategori</th>
+                                </tr>
+                            </thead>
+                            <tbody id="layerTableBody">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="layer-actions">
+                        <button class="btn btn-primary" id="analyzeLayersBtn">
+                            <i class="fas fa-chart-line"></i>
+                            <span data-i18n="startAnalysis">Analizi Başlat</span>
+                        </button>
+                        <button class="btn btn-outline" id="cancelLayerSelectionBtn">
+                            <i class="fas fa-times"></i>
+                            <span data-i18n="cancel">İptal</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Floor Management Section -->
+            <section class="floor-management-section hidden" id="floorManagementSection">
+                <div class="table-card">
+                    <h3 class="table-title">
+                        <i class="fas fa-layer-group"></i>
+                        <span data-i18n="floorList">Yüklenen Katlar</span>
+                    </h3>
+                    <div class="table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th data-i18n="floorName">Kat Adı</th>
+                                    <th data-i18n="floorHeightTitle">Yükseklik (m)</th>
+                                    <th data-i18n="actions">İşlemler</th>
+                                </tr>
+                            </thead>
+                            <tbody id="floorTableBody">
+                                <!-- Dynamic content -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Results Section -->
+            <section class="results-section hidden" id="resultsSection">
+                <div class="results-header">
+                    <h2><i class="fas fa-chart-bar"></i> <span data-i18n="analysisResults">Analiz Sonuçları</span></h2>
+                    <div class="results-actions">
+                        <button class="btn btn-primary" id="addFloorBtn">
+                            <i class="fas fa-layer-plus"></i>
+                            <span data-i18n="addFloor">Kat Ekle</span>
+                        </button>
+                        <button class="btn btn-secondary" id="exportExcelBtn">
+                            <i class="fas fa-file-excel"></i>
+                            <span data-i18n="downloadExcel">Excel İndir</span>
+                        </button>
+                        <button class="btn btn-secondary" id="export3dDxfBtn">
+                            <i class="fas fa-cube"></i>
+                            <span data-i18n="export3dDxf">3D DXF İndir</span>
+                        </button>
+                        <button class="btn btn-outline" id="newAnalysisBtn">
+                            <i class="fas fa-plus"></i>
+                            <span data-i18n="newAnalysis">Yeni Analiz</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- DXF Preview Canvas -->
+                <div class="preview-card" id="previewCard">
+                    <h3 class="table-title">
+                        <i class="fas fa-eye"></i>
+                        <span data-i18n="dxfPreview">DXF Önizleme</span>
+                    </h3>
+                    <div class="preview-toolbar">
+                        <button class="btn btn-sm" id="zoomInBtn" title="Zoom In">
+                            <i class="fas fa-search-plus"></i>
+                        </button>
+                        <button class="btn btn-sm" id="zoomOutBtn" title="Zoom Out">
+                            <i class="fas fa-search-minus"></i>
+                        </button>
+                        <button class="btn btn-sm" id="resetViewBtn" title="Reset">
+                            <i class="fas fa-expand"></i>
+                        </button>
+                        <button class="btn btn-sm" id="toggleLabelsBtn" title="Toggle Labels" style="margin-left: 4px;">
+                            <i class="fas fa-tags"></i>
+                        </button>
+                        <button class="btn btn-sm hidden" id="clearHighlightBtn" title="Clear Highlight"
+                            style="margin-left: 4px;">
+                            <i class="fas fa-times"></i> <span data-i18n="clearSelection">Seçimi Temizle</span>
+                        </button>
+
+                        <div class="preview-mode-toggle" style="margin-left: 12px; display: flex; gap: 4px;">
+                            <button class="btn btn-sm active" id="view2dBtn">2D</button>
+                            <button class="btn btn-sm" id="view3dBtn">3D</button>
+                        </div>
+
+                        <div class="floor-height-input"
+                            style="margin-left: 12px; display: flex; align-items: center; gap: 8px;">
+                            <label for="floorHeightInput" style="font-size: 0.85rem; color: var(--text-secondary);"
+                                data-i18n="floorHeight">Kat Yüksekliği (m)</label>
+                            <input type="number" id="floorHeightInput" value="3.0" step="0.1" min="0.1" max="10"
+                                style="width: 60px; padding: 4px 8px; background: var(--dark-bg); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; font-size: 0.85rem;">
+                        </div>
+                        <div class="preview-legend">
+                            <span class="legend-item legend-column"><i class="fas fa-square"></i> <span
+                                    data-i18n="column">Kolon</span></span>
+                            <span class="legend-item legend-wall"><i class="fas fa-square"></i> <span
+                                    data-i18n="wall">Perde</span></span>
+                            <span class="legend-item legend-core"><i class="fas fa-square"></i> <span
+                                    data-i18n="core">Çekirdek</span></span>
+                            <span class="legend-item legend-other"><i class="fas fa-square"></i>
+                                <span>Diğer</span></span>
+                        </div>
+                    </div>
+                    <div class="preview-canvas-wrapper" id="canvasWrapper2d">
+                        <canvas id="dxfCanvas"></canvas>
+                    </div>
+                    <div class="preview-canvas-wrapper hidden" id="canvasWrapper3d" style="position: relative;">
+                        <div id="threeContainer" style="width: 100%; height: 100%;"></div>
+                        <div id="threeTooltip" class="three-tooltip hidden"></div>
+                    </div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="summary-grid">
+                    <div class="summary-card card-blue">
+                        <div class="summary-icon">
+                            <i class="fas fa-columns"></i>
+                        </div>
+                        <div class="summary-content">
+                            <h3 id="columnCount">0</h3>
+                            <p data-i18n="column">Kolon</p>
+                        </div>
+                    </div>
+                    <div class="summary-card card-purple">
+                        <div class="summary-icon">
+                            <i class="fas fa-border-all"></i>
+                        </div>
+                        <div class="summary-content">
+                            <h3 id="wallCount">0</h3>
+                            <p data-i18n="wall">Perde</p>
+                        </div>
+                    </div>
+                    <div class="summary-card card-teal">
+                        <div class="summary-icon">
+                            <i class="fas fa-cube"></i>
+                        </div>
+                        <div class="summary-content">
+                            <h3 id="coreCount">0</h3>
+                            <p data-i18n="core">Çekirdek</p>
+                        </div>
+                    </div>
+                    <div class="summary-card card-orange">
+                        <div class="summary-icon">
+                            <i class="fas fa-grip-lines"></i>
+                        </div>
+                        <div class="summary-content">
+                            <h3 id="beamCount">0</h3>
+                            <p data-i18n="beam">Kiriş</p>
+                        </div>
+                    </div>
+                    <div class="summary-card card-pink">
+                        <div class="summary-icon">
+                            <i class="fas fa-layer-group"></i>
+                        </div>
+                        <div class="summary-content">
+                            <h3 id="slabCount">0</h3>
+                            <p data-i18n="slab">Döşeme</p>
+                        </div>
+                    </div>
+                    <div class="summary-card card-green">
+                        <div class="summary-icon">
+                            <i class="fas fa-calculator"></i>
+                        </div>
+                        <div class="summary-content">
+                            <h3 id="totalElements">0</h3>
+                            <p data-i18n="totalElements">Toplam Eleman Adedi</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floor Management (Visible if floors > 0) -->
+                <div class="floor-management-section hidden" id="floorManagementSection">
+                    <div class="table-card">
+                        <h3 class="table-title">
+                            <i class="fas fa-layer-group"></i>
+                            <span data-i18n="floorList">Yüklenen Katlar</span>
+                        </h3>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th data-i18n="floorName">Kat Adı</th>
+                                        <th data-i18n="floorHeightTitle">Yükseklik (m)</th>
+                                        <th data-i18n="actions">İşlemler</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="floorTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="analysis-details-grid">
+                    <!-- Column Table -->
+                    <div class="table-card hidden" id="columnsTableWrapper">
+                        <h3 class="table-title">
+                            <i class="fas fa-columns"></i>
+                            <span data-i18n="columnDetails">Kolon Detayları</span>
+                        </h3>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th data-i18n="typeName">Tip Adı</th>
+                                        <th data-i18n="sectionSize">Kesit Boyutu</th>
+                                        <th data-i18n="count">Adet</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="columnsTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Wall Table -->
+                    <div class="table-card hidden" id="wallsTableWrapper">
+                        <h3 class="table-title">
+                            <i class="fas fa-border-all"></i>
+                            <span data-i18n="wallDetails">Perde Duvar Detayları</span>
+                        </h3>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th data-i18n="typeName">Tip Adı</th>
+                                        <th data-i18n="totalLength">Top. Uzunluk (m)</th>
+                                        <th data-i18n="count">Adet</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="wallsTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Core Table -->
+                    <div class="table-card hidden" id="coresTableWrapper">
+                        <h3 class="table-title">
+                            <i class="fas fa-cube"></i>
+                            <span data-i18n="coreDetails">Çekirdek Detayları</span>
+                        </h3>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th data-i18n="typeName">Tip Adı</th>
+                                        <th data-i18n="totalLength">Top. Uzunluk (m)</th>
+                                        <th data-i18n="count">Adet</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="coresTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Beam Table -->
+                    <div class="table-card hidden" id="beamsTableWrapper">
+                        <h3 class="table-title">
+                            <i class="fas fa-grip-lines"></i>
+                            <span data-i18n="beamDetails">Kiriş Detayları</span>
+                        </h3>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th data-i18n="typeName">Tip Adı</th>
+                                        <th data-i18n="sectionSize">Kesit</th>
+                                        <th data-i18n="totalLength">Top. Uzunluk (m)</th>
+                                        <th data-i18n="count">Adet</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="beamsTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Slab Table -->
+                    <div class="table-card hidden" id="slabsTableWrapper">
+                        <h3 class="table-title">
+                            <i class="fas fa-layer-group"></i>
+                            <span data-i18n="slabDetails">Döşeme Detayları</span>
+                        </h3>
+                        <div class="table-wrapper">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>#</th>
+                                        <th data-i18n="typeName">Tip Adı</th>
+                                        <th data-i18n="thicknessDepth">Kalınlık</th>
+                                        <th data-i18n="totalArea">Top. Alan (m²)</th>
+                                        <th data-i18n="count">Adet</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="slabsTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p data-i18n="copyright">&copy; 2026 Eray Alkan. Tüm hakları saklıdır.</p>
+
+        </div>
+    </footer>
+
+    <!-- Toast Notification -->
+    <div class="toast hidden" id="toast">
+        <i class="fas fa-check-circle"></i>
+        <span id="toastMessage">İşlem başarılı!</span>
+    </div>
+
+    <!-- Scripts -->
+
+    <!-- Excel Export Library -->
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <!-- DXF Parser Library (Local) -->
+    <script src="dxf-parser.js"></script>
+    <!-- i18n System -->
+    <script src="i18n.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
