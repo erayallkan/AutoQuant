@@ -1,4 +1,4 @@
-# DWG Yapısal Eleman Analiz Web Uygulaması
+# DXF Yapısal Eleman Analiz Web Uygulaması
 
 ## 📋 Proje Özeti
 
