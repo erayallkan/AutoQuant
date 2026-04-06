@@ -2156,13 +2156,14 @@ function exportTo3DDXF() {
 
     showToast(t('progressPreparing'), 'success');
 
-    let dxf = "0\r\nSECTION\r\n2\r\nENTITIES\r\n";
+    // Revit uyumluluğu için gerekli DXF başlıkları ve tabloları ekleniyor (R12 / AC1009 formatı)
+    let dxf = "  0\r\nSECTION\r\n  2\r\nHEADER\r\n  9\r\n$ACADVER\r\n  1\r\nAC1009\r\n  9\r\n$INSUNITS\r\n 70\r\n  4\r\n  0\r\nENDSEC\r\n" +
+              "  0\r\nSECTION\r\n  2\r\nTABLES\r\n  0\r\nTABLE\r\n  2\r\nLAYER\r\n 70\r\n  1\r\n  0\r\nENDTAB\r\n  0\r\nENDSEC\r\n" +
+              "  0\r\nSECTION\r\n  2\r\nBLOCKS\r\n  0\r\nENDSEC\r\n" +
+              "  0\r\nSECTION\r\n  2\r\nENTITIES\r\n";
 
     // Function to append entities to DXF string
     const appendEntities = (data, groupMap, catMap, heightM, zOffsetM, floorPrefix) => {
-        const heightDxfValue = (heightM * 100) / DXF_TO_CM;
-        const zOffsetDxf = ((zOffsetM * 100) / DXF_TO_CM).toFixed(4);
-
         data.entities.forEach((entity, idx) => {
             const category = getEntityCategory(entity, catMap);
             if (category === 'other') return;
@@ -2170,37 +2171,92 @@ function exportTo3DDXF() {
             const groupInfo = groupMap.get(idx);
             const layerName = `${floorPrefix}_3D_${category.toUpperCase()}_${groupInfo?.typeName || 'UNKNOWN'}`;
 
-            // Slabs are usually thinner (20cm)
-            const finalHeightDxf = category === 'slab' ? (20 / DXF_TO_CM).toFixed(4) : heightDxfValue.toFixed(4);
+            let thicknessCm = 20; // Default
+            if (groupInfo && groupInfo.thickness) {
+                thicknessCm = groupInfo.thickness;
+            } else if (category === 'slab') {
+                thicknessCm = 20;
+            }
+
+            let zBottom, zTop;
+            const floorBottom = (zOffsetM * 100) / DXF_TO_CM;
+            const floorTop = ((zOffsetM + heightM) * 100) / DXF_TO_CM;
+
+            if (category === 'slab' || category === 'beam') {
+                const thickDxf = thicknessCm / DXF_TO_CM;
+                zTop = floorTop;
+                zBottom = floorTop - thickDxf;
+            } else {
+                zBottom = floorBottom;
+                zTop = floorTop;
+            }
+
+            const zBottomDxf = zBottom.toFixed(4);
+            const zTopDxf = zTop.toFixed(4);
 
             if (entity.type === 'LWPOLYLINE' || entity.type === 'POLYLINE') {
                 const vertices = entity.vertices || [];
                 if (vertices.length < 2) return;
 
-                dxf += "0\r\nPOLYLINE\r\n";
-                dxf += "8\r\n" + layerName + "\r\n";
-                dxf += "66\r\n1\r\n";
-                dxf += "39\r\n" + finalHeightDxf + "\r\n";
-                dxf += "70\r\n" + (entity.shape ? "1" : "0") + "\r\n";
+                const first = vertices[0];
+                const last = vertices[vertices.length - 1];
+                const distSq = Math.pow(last.x - first.x, 2) + Math.pow(last.y - first.y, 2);
+                const isClosed = entity.shape || (distSq <= 1.0) || (vertices.length >= 4 && vertices.length <= 5);
 
-                vertices.forEach(v => {
-                    dxf += "0\r\nVERTEX\r\n";
-                    dxf += "8\r\n" + layerName + "\r\n";
-                    dxf += "10\r\n" + v.x.toFixed(4) + "\r\n";
-                    dxf += "20\r\n" + v.y.toFixed(4) + "\r\n";
-                    dxf += "30\r\n" + zOffsetDxf + "\r\n";
+                const lines = [];
+                for (let j = 0; j < vertices.length - 1; j++) {
+                    lines.push({ v1: vertices[j], v2: vertices[j + 1] });
+                }
+                if (isClosed && distSq > 1.0) {
+                     lines.push({ v1: last, v2: first });
+                }
+
+                lines.forEach(line => {
+                    const p1 = line.v1;
+                    const p2 = line.v2;
+                    // 3DFACE segment
+                    dxf += "  0\r\n3DFACE\r\n  8\r\n" + layerName + "\r\n";
+                    dxf += " 10\r\n" + p1.x.toFixed(4) + "\r\n 20\r\n" + p1.y.toFixed(4) + "\r\n 30\r\n" + zBottomDxf + "\r\n";
+                    dxf += " 11\r\n" + p2.x.toFixed(4) + "\r\n 21\r\n" + p2.y.toFixed(4) + "\r\n 31\r\n" + zBottomDxf + "\r\n";
+                    dxf += " 12\r\n" + p2.x.toFixed(4) + "\r\n 22\r\n" + p2.y.toFixed(4) + "\r\n 32\r\n" + zTopDxf + "\r\n";
+                    dxf += " 13\r\n" + p1.x.toFixed(4) + "\r\n 23\r\n" + p1.y.toFixed(4) + "\r\n 33\r\n" + zTopDxf + "\r\n";
+
+                    // Wireframe lines
+                    dxf += "  0\r\nLINE\r\n  8\r\n" + layerName + "\r\n";
+                    dxf += " 10\r\n" + p1.x.toFixed(4) + "\r\n 20\r\n" + p1.y.toFixed(4) + "\r\n 30\r\n" + zBottomDxf + "\r\n";
+                    dxf += " 11\r\n" + p2.x.toFixed(4) + "\r\n 21\r\n" + p2.y.toFixed(4) + "\r\n 31\r\n" + zBottomDxf + "\r\n";
+                    
+                    dxf += "  0\r\nLINE\r\n  8\r\n" + layerName + "\r\n";
+                    dxf += " 10\r\n" + p1.x.toFixed(4) + "\r\n 20\r\n" + p1.y.toFixed(4) + "\r\n 30\r\n" + zTopDxf + "\r\n";
+                    dxf += " 11\r\n" + p2.x.toFixed(4) + "\r\n 21\r\n" + p2.y.toFixed(4) + "\r\n 31\r\n" + zTopDxf + "\r\n";
                 });
-                dxf += "0\r\nSEQEND\r\n";
-                dxf += "8\r\n" + layerName + "\r\n";
             }
             else if (entity.type === 'CIRCLE') {
-                dxf += "0\r\nCIRCLE\r\n";
-                dxf += "8\r\n" + layerName + "\r\n";
-                dxf += "39\r\n" + heightDxf + "\r\n";
-                dxf += "10\r\n" + entity.center.x.toFixed(4) + "\r\n";
-                dxf += "20\r\n" + entity.center.y.toFixed(4) + "\r\n";
-                dxf += "30\r\n" + zOffsetDxf + "\r\n";
-                dxf += "40\r\n" + entity.radius.toFixed(4) + "\r\n";
+                const segments = 24;
+                for (let i = 0; i < segments; i++) {
+                    const a1 = (i / segments) * Math.PI * 2;
+                    const a2 = ((i + 1) / segments) * Math.PI * 2;
+                    const c = entity.center;
+                    const r = entity.radius;
+                    const x1 = c.x + r * Math.cos(a1);
+                    const y1 = c.y + r * Math.sin(a1);
+                    const x2 = c.x + r * Math.cos(a2);
+                    const y2 = c.y + r * Math.sin(a2);
+
+                    dxf += "  0\r\n3DFACE\r\n  8\r\n" + layerName + "\r\n";
+                    dxf += " 10\r\n" + x1.toFixed(4) + "\r\n 20\r\n" + y1.toFixed(4) + "\r\n 30\r\n" + zBottomDxf + "\r\n";
+                    dxf += " 11\r\n" + x2.toFixed(4) + "\r\n 21\r\n" + y2.toFixed(4) + "\r\n 31\r\n" + zBottomDxf + "\r\n";
+                    dxf += " 12\r\n" + x2.toFixed(4) + "\r\n 22\r\n" + y2.toFixed(4) + "\r\n 32\r\n" + zTopDxf + "\r\n";
+                    dxf += " 13\r\n" + x1.toFixed(4) + "\r\n 23\r\n" + y1.toFixed(4) + "\r\n 33\r\n" + zTopDxf + "\r\n";
+
+                    dxf += "  0\r\nLINE\r\n  8\r\n" + layerName + "\r\n";
+                    dxf += " 10\r\n" + x1.toFixed(4) + "\r\n 20\r\n" + y1.toFixed(4) + "\r\n 30\r\n" + zBottomDxf + "\r\n";
+                    dxf += " 11\r\n" + x2.toFixed(4) + "\r\n 21\r\n" + y2.toFixed(4) + "\r\n 31\r\n" + zBottomDxf + "\r\n";
+                    
+                    dxf += "  0\r\nLINE\r\n  8\r\n" + layerName + "\r\n";
+                    dxf += " 10\r\n" + x1.toFixed(4) + "\r\n 20\r\n" + y1.toFixed(4) + "\r\n 30\r\n" + zTopDxf + "\r\n";
+                    dxf += " 11\r\n" + x2.toFixed(4) + "\r\n 21\r\n" + y2.toFixed(4) + "\r\n 31\r\n" + zTopDxf + "\r\n";
+                }
             }
         });
     };
@@ -2217,7 +2273,7 @@ function exportTo3DDXF() {
         appendEntities(dxfData, entityGroupMap, layerCategoryMap, h, z, "CURRENT");
     }
 
-    dxf += "0\r\nENDSEC\r\n0\r\nEOF\r\n";
+    dxf += "  0\r\nENDSEC\r\n  0\r\nEOF\r\n";
 
     const blob = new Blob([dxf], { type: 'application/dxf' });
     const url = URL.createObjectURL(blob);
